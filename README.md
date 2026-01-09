@@ -3,7 +3,7 @@
 ## Verificador de Registros do Forponto (Forponto Registry Checker)
 
 <p align="left">
-  <img src="screenshot.png" alt="Screenshot do Sistema">
+  <img src="Screenshot.png" alt="Screenshot do Sistema">
 </p>
 
 Automation and error correction tool developed in PowerShell to configure, fix, and 
