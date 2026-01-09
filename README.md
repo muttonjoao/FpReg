@@ -2,6 +2,10 @@
 
 ## Verificador de Registros do Forponto (Forponto Registry Checker)
 
+<p align="left">
+  <img src="screenshot.png" alt="Screenshot do Sistema">
+</p>
+
 Automation and error correction tool developed in PowerShell to configure, fix, and 
 optimize the environment for the proper functioning of the Borland Database Engine (BDE), essential for running 
 the Forponto (Time & Attendance System).
