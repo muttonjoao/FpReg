@@ -6,7 +6,7 @@
             try {
                 # Adiciona Data/Hora
                 $Time = Get-Date -Format "HH:mm:ss"
-                Add-Content -Path $script:LogFile -Value "[$Time] $Object" -ErrorAction SilentlyContinue
+                Add-Content -Path $script:LogFile -Value "[$Time] $Object" -Encoding UTF8 -ErrorAction SilentlyContinue
             } catch {}
         }
     }
@@ -69,6 +69,48 @@
     $FontLabel = New-Object System.Drawing.Font("Segoe UI Semibold", 10)
     $FontBody  = New-Object System.Drawing.Font("Segoe UI", 10)
     $FontSmall = New-Object System.Drawing.Font("Segoe UI", 9)
+
+    # função para ajustar permissões de diretório
+    function Repair-DirectorySecurity {
+        param([string]$TargetDir)
+        if (-not (Test-Path $TargetDir)) { return }
+
+        # icacls
+        Write-Host "Ajustando permissões em: $TargetDir" -ForegroundColor Cyan
+        
+        $ProcArgs = "`"$TargetDir`" /grant *S-1-1-0:(OI)(CI)F /T /C /Q"
+        $p = Start-Process -FilePath "icacls.exe" -ArgumentList $ProcArgs -WindowStyle Hidden -PassThru -Wait
+        
+        if ($p.ExitCode -eq 0) {
+            Write-Host "Permissões aplicadas com sucesso." -ForegroundColor Green
+        } else {
+            Write-Host "Aviso: icacls retornou código $($p.ExitCode)." -ForegroundColor Yellow
+        }
+
+        # Remove ReadOnly/System e bloqueio 
+        Write-Host "Removendo ReadOnly/System e Desbloqueando..." -ForegroundColor Cyan
+        $Items = Get-ChildItem -Path $TargetDir -Recurse -Force -ErrorAction SilentlyContinue
+
+        foreach ($Item in $Items) {
+            try {      
+                # Remove ReadOnly se existir
+                if ($Item.IsReadOnly) {
+                    $Item.IsReadOnly = $false
+                }
+
+                # Remove atributo de Sistema (System) se existir
+                if ($Item.Attributes -band [System.IO.FileAttributes]::System) {
+                    $Item.Attributes = ($Item.Attributes -band -not [System.IO.FileAttributes]::System)
+                }
+
+                # Tenta desbloquear
+                Unblock-File -Path $Item.FullName -ErrorAction SilentlyContinue
+                
+            } catch {}
+        }
+        
+        Write-Host "Configuração de atributos concluída." -ForegroundColor Green
+    }
 
     # helper para bordas quadradas
     function Set-SquareBorder {
@@ -356,7 +398,7 @@
     # Cancelar
     $BtnCancel = New-Object System.Windows.Forms.Button
     $BtnCancel.Text = "Cancelar"
-    $BtnCancel.Font = $FontBody
+    $BtnCancel.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
     $BtnCancel.Size = New-Object System.Drawing.Size(100, 40)
     $BtnCancel.Location = New-Object System.Drawing.Point(0, 400) # <-- Mudou para 0
     $BtnCancel.FlatStyle = "Flat"
@@ -372,9 +414,9 @@
     # Executar
     $BtnGo = New-Object System.Windows.Forms.Button
     $BtnGo.Text = "Executar"
-    $BtnGo.Font = $FontLabel
+    $BtnGo.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
     $BtnGo.Size = New-Object System.Drawing.Size(100, 40)
-    $BtnGo.Location = New-Object System.Drawing.Point(440, 400) # <-- Mudou para 440
+    $BtnGo.Location = New-Object System.Drawing.Point(440, 400)
     $BtnGo.FlatStyle = "Flat"
     $BtnGo.FlatAppearance.BorderSize = 0
     $BtnGo.BackColor = $Theme.ButtonSuccess
@@ -387,116 +429,131 @@
     # logica do programa
     $BtnGo.Add_Click({
 
-    # validação do BDE
-    $Path = $TxtPath.Text.Trim('"').Trim()
+        # validação do BDE
+        $Path = $TxtPath.Text.Trim('"').Trim()
 
-    # arquivos essenciais do BDE
-    $CriticalFilesBDE = @("IDAPI32.DLL",  "BLW32.DLL", "BANTAM.DLL", "BDEADMIN.EXE", "IDR20009.DLL", "IDSQL32.DLL", "IDPDX32.DLL", "IDDBAS32.DLL")
-    $MissingFilesBDE = @()
+        # arquivos essenciais do BDE
+        $CriticalFilesBDE = @("IDAPI32.DLL",  "BLW32.DLL", "BANTAM.DLL", "BDEADMIN.EXE", "IDR20009.DLL", "IDSQL32.DLL", "IDPDX32.DLL", "IDDBAS32.DLL")
+        $MissingFilesBDE = @()
 
-    if ([string]::IsNullOrWhiteSpace($Path) -or !(Test-Path $Path)) {
-        [System.Windows.Forms.MessageBox]::Show("O diretório informado nao existe.", "Erro", "OK", "Error")
-        return
-    }
-
-    foreach ($file in $CriticalFilesBDE) {
-        $found = Get-ChildItem -Path $Path -Filter $file -Recurse -ErrorAction SilentlyContinue
-        if (!$found) { $MissingFilesBDE += $file }
-    }
-
-    if ($MissingFilesBDE.Count -gt 0) {
-        $msg = "A instalação do BDE neste diretório parece incompleta.`n`nArquivos ausentes:`n" + ($MissingFilesBDE -join "`n") + "`n`nDeseja tentar configurar mesmo assim? (não recomendado)"
-        $result = [System.Windows.Forms.MessageBox]::Show($msg, "Instalação Corrompida", "YesNo", "Warning") 
-        if ($result -eq "No") { return }
-    }
-
-    # arquivos essenciais do Forponto
-    $CriticalFilesFP = @("Forponto.exe", "libeay32.dll", "ssleay32.dll", "TaskRecursosCompartilhados.dll", "Forponto.inf")
-    $MissingFilesFP  = @()
-
-    # validação do Forponto
-    $FpPath = $TxtFpPath.Text.Trim('"').Trim()
-
-    $CriticalFilesFP = @("Forponto.exe", "libeay32.dll", "ssleay32.dll", "TaskRecursosCompartilhados.dll")
-    $MissingFilesFP  = @()
-
-    if ([string]::IsNullOrWhiteSpace($FpPath) -or !(Test-Path $FpPath)) {
-        [System.Windows.Forms.MessageBox]::Show("O diretório do Forponto não foi informado ou não existe.", "Erro", "OK", "Error")
-        return
-    }
-
-    # tenta localizar o executavel principal para ajustar o caminho
-    $MainExe = Get-ChildItem -Path $FpPath -Filter "Forponto.exe" -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
-
-    if ($MainExe) {
-        $FpPath = $MainExe.DirectoryName
-        $TxtFpPath.Text = $FpPath
-    }
-
-    # raiz do Forponto
-    foreach ($file in $CriticalFilesFP) {
-        if (!(Test-Path "$FpPath\$file")) {
-            $MissingFilesFP += $file
+        if ([string]::IsNullOrWhiteSpace($Path) -or !(Test-Path $Path)) {
+            [System.Windows.Forms.MessageBox]::Show("O diretório informado nao existe.", "Erro", "OK", "Error")
+            return
         }
-    }
 
-    # dados do Forponto
-    if (!(Test-Path "$FpPath\Dados")) { 
-        $MissingFilesFP += "Pasta 'Dados'" 
-    } elseif (!(Test-Path "$FpPath\Dados\Forponto.inf")) {
-        $MissingFilesFP += "Dados\Forponto.inf" 
-    }
+        foreach ($file in $CriticalFilesBDE) {
+            $found = Get-ChildItem -Path $Path -Filter $file -Recurse -ErrorAction SilentlyContinue
+            if (!$found) { $MissingFilesBDE += $file }
+        }
 
-    if ($MissingFilesFP.Count -gt 0) {
-        $msg = "A estrutura do Forponto em '$FpPath' está incompleta.`n`nAusentes:`n" + ($MissingFilesFP -join "`n") + "`n`nDeseja continuar assim mesmo?"
-        $result = [System.Windows.Forms.MessageBox]::Show($msg, "Aviso de Integridade", "YesNo", "Warning") 
-        if ($result -eq "No") { return }
-    }
+        if ($MissingFilesBDE.Count -gt 0) {
+            $msg = "A instalação do BDE neste diretório parece incompleta.`n`nArquivos ausentes:`n" + ($MissingFilesBDE -join "`n") + "`n`nDeseja tentar configurar mesmo assim? (não recomendado)"
+            $result = [System.Windows.Forms.MessageBox]::Show($msg, "Instalação Corrompida", "YesNo", "Warning") 
+            if ($result -eq "No") { return }
+        }
 
-    # checa privilégios de admin
-    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = New-Object System.Security.Principal.WindowsPrincipal($identity)
-    if (-not $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        [System.Windows.Forms.MessageBox]::Show("Execute como Administrador para alterar o Registro.", "Permissão", "OK", "Warning"); return
-    }
+        # arquivos essenciais do Forponto
+        $CriticalFilesFP = @("Forponto.exe", "libeay32.dll", "ssleay32.dll", "TaskRecursosCompartilhados.dll", "Forponto.inf")
+        $MissingFilesFP  = @()
 
-    $BtnGo.Text = "Processando..."
-    $BtnGo.Enabled = $false
-    $Form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
-    $Form.Refresh()
+        # validação do Forponto
+        $FpPath = $TxtFpPath.Text.Trim('"').Trim()
 
-    try {
-    #ponto de restauração
+        $CriticalFilesFP = @("Forponto.exe", "libeay32.dll", "ssleay32.dll", "TaskRecursosCompartilhados.dll")
+        $MissingFilesFP  = @()
+
+        if ([string]::IsNullOrWhiteSpace($FpPath) -or !(Test-Path $FpPath)) {
+            [System.Windows.Forms.MessageBox]::Show("O diretório do Forponto não foi informado ou não existe.", "Erro", "OK", "Error")
+            return
+        }
+
+        # tenta localizar o executavel principal para ajustar o caminho
+        $MainExe = Get-ChildItem -Path $FpPath -Filter "Forponto.exe" -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
+
+        if ($MainExe) {
+            $FpPath = $MainExe.DirectoryName
+            $TxtFpPath.Text = $FpPath
+        }
+
+        # raiz do Forponto
+        foreach ($file in $CriticalFilesFP) {
+            if (!(Test-Path "$FpPath\$file")) {
+                $MissingFilesFP += $file
+            }
+        }
+
+        # dados do Forponto
+        if (!(Test-Path "$FpPath\Dados")) { 
+            $MissingFilesFP += "Pasta 'Dados'" 
+        } elseif (!(Test-Path "$FpPath\Dados\Forponto.inf")) {
+            $MissingFilesFP += "Dados\Forponto.inf" 
+        }
+
+        if ($MissingFilesFP.Count -gt 0) {
+            $msg = "A estrutura do Forponto em '$FpPath' está incompleta.`n`nAusentes:`n" + ($MissingFilesFP -join "`n") + "`n`nDeseja continuar assim mesmo?"
+            $result = [System.Windows.Forms.MessageBox]::Show($msg, "Aviso de Integridade", "YesNo", "Warning") 
+            if ($result -eq "No") { return }
+        }
+
+        # checa privilégios de admin
+        $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+        $principal = New-Object System.Security.Principal.WindowsPrincipal($identity)
+        if (-not $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)) {
+            [System.Windows.Forms.MessageBox]::Show("Execute como Administrador para alterar o Registro.", "Permissão", "OK", "Warning"); return
+        }
+
+        $BtnGo.Text = "Processando..."
+        $BtnGo.Enabled = $false
+        $Form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+        $Form.Refresh()
+
+        $BtnGo.Text = "Criando backup..."
+        $Form.Refresh()
+
         try {
-            $SysRestore = Get-ComputerRestorePoint -ErrorAction SilentlyContinue
-            if ($SysRestore -ne $null) {
-                Write-Host "Verificando Ponto de Restauraçao." -ForegroundColor Cyan
+        #ponto de restauração
+            try {
+                $SysRestore = Get-ComputerRestorePoint -ErrorAction SilentlyContinue
+                if ($SysRestore -ne $null) {
+                    Write-Host "Verificando Ponto de Restauração." -ForegroundColor Cyan
+                    
+                    # Tenta criar. Se falhar (ex: limite de 24h), vai para o catch sem travar a tela
+                    Checkpoint-Computer -Description "Backup Pre-Forponto" -RestorePointType "MODIFY_SETTINGS" -ErrorAction Stop SilentlyContinue
+                    
+                    Write-Host "Ponto de Restauração criado com sucesso." -ForegroundColor Green
+                }
+                } catch { 
+                    # Se der erro (ex: já existe um backup hoje), registra no log, sem janela de alerta
+                    Write-Host "Aviso: Ponto de restauração ignorado (Limite de frequência ou serviço inativo)." -ForegroundColor Yellow
+                    Write-Host "Seguindo para backup do registro..." -ForegroundColor DarkGray
+                }
+
+            # backup do registro do BDE usando o reg.exe
+            $RegTarget = "HKLM\SOFTWARE\WOW6432Node\Borland"
+            $BackupRegFile = Join-Path $BaseDir "Backup_Borland_$(Get-Date -Format 'yyyyMMdd_HHmm').reg"
+
+            if (Test-Path "HKLM:\SOFTWARE\WOW6432Node\Borland") {
+                Write-Host "Exportando configuração atual do BDE para: $BackupRegFile" -ForegroundColor Cyan
                 
-                # Tenta criar. Se falhar (ex: limite de 24h), vai para o catch sem travar a tela
-                Checkpoint-Computer -Description "Backup Pre-Forponto" -RestorePointType "MODIFY_SETTINGS" -ErrorAction Stop SilentlyContinue
+                $proc = Start-Process -FilePath "reg.exe" -ArgumentList "export `"$RegTarget`" `"$BackupRegFile`" /y" -Wait -PassThru -NoNewWindow
                 
-                Write-Host "Ponto de Restauracao criado com sucesso." -ForegroundColor Green
+                if ($proc.ExitCode -eq 0) {
+                    Write-Host "Backup de registro salvo." -ForegroundColor Green
+                } else {
+                    Write-Host "Aviso: reg.exe retornou código $($proc.ExitCode) ao exportar o registro." -ForegroundColor Yellow
+                }
             }
-        } catch { 
-            # Se der erro (ex: já existe um backup hoje), registra no log, sem janela de alerta
-            Write-Host "Aviso: Ponto de restauracao ignorado (Limite de frequencia ou servico inativo)." -ForegroundColor Yellow
-            Write-Host "Seguindo para backup do registro..." -ForegroundColor DarkGray
-        }
 
-        # backup do registro do BDE usando o reg.exe
-        $RegTarget = "HKLM\SOFTWARE\WOW6432Node\Borland"
-        $BackupRegFile = Join-Path $BaseDir "Backup_Borland_$(Get-Date -Format 'yyyyMMdd_HHmm').reg"
+        $BtnGo.Text = "Ajustando Segurança..."
+        $BtnGo.Enabled = $false
+        $Form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+        $Form.Refresh()
 
-        if (Test-Path "HKLM:\SOFTWARE\WOW6432Node\Borland") {
-            Write-Host "Exportando configurao atual do BDE para: $BackupRegFile" -ForegroundColor Cyan
-            
-            $proc = Start-Process -FilePath "reg.exe" -ArgumentList "export `"$RegTarget`" `"$BackupRegFile`" /y" -Wait -PassThru -NoNewWindow
-            
-            if ($proc.ExitCode -eq 0) {
-                Write-Host "Backup de registro salvo." -ForegroundColor Green
-            }
-        }
+        Repair-DirectorySecurity -TargetDir $Path
+        Repair-DirectorySecurity -TargetDir $FpPath
 
+        $BtnGo.Text = "Configurando Registro..."
+        $Form.Refresh()
         #mapeamento de chaves e valores
         $RegBase = "HKLM:\SOFTWARE\WOW6432Node\Borland"
         $DefaultBdePath = "C:\Program Files (x86)\Borland\Common Files\BDE"
@@ -868,7 +925,7 @@
                 # Tenta renomear
                 Move-Item -Path $CfgFile -Destination $OldCfgPath -Force -ErrorAction Stop
                 $FoiRenomeado = $true
-                Write-Host "Backup da configuracao encontrado e salvo como: $BackupName" -ForegroundColor Yellow
+                Write-Host "Backup da configuração encontrado e salvo como: $BackupName" -ForegroundColor Yellow
             } catch {
                 Write-Warning "Falha ao criar backup do IDAPI32.CFG. Verifique se o arquivo está em uso."
                 # Aqui você decide: para tudo ou continua? 
@@ -876,7 +933,7 @@
                 # Mas vamos apenas avisar e seguir para não travar o suporte.
             }
         } else {
-            Write-Host "Nenhum arquivo IDAPI32.CFG encontrado. O script configurara o Registro para criar um novo padrao." -ForegroundColor DarkGray
+            Write-Host "Nenhum arquivo IDAPI32.CFG encontrado. O script configurará o Registro para criar um novo padrão." -ForegroundColor DarkGray
         }
 
         # gravação das chaves e valores
@@ -939,7 +996,7 @@
         $RepoKey = "$RegBase\Database Engine\Settings\REPOSITORIES"
         if (!(Test-Path $RepoKey)) { 
             New-Item -Path $RepoKey -Force | Out-Null 
-            Write-Host "Criada chave vazia: REPOSITORIES" -ForegroundColor Cyan
+            Write-Host "Criada chave: REPOSITORIES" -ForegroundColor Cyan
         }
 
         # registro da DLL de recursos compartilhados
@@ -957,7 +1014,7 @@
                     if ($proc.ExitCode -eq 0) {
                         Write-Host "DLL registrada com sucesso via RegAsm." -ForegroundColor Green
                     } else {
-                        Write-Host "Aviso: RegAsm retornou codigo de saida $($proc.ExitCode)." -ForegroundColor Yellow
+                        Write-Host "Aviso: RegAsm retornou código de saída $($proc.ExitCode)." -ForegroundColor Yellow
                     }
                 } catch {
                     Write-Warning "Erro ao tentar executar o RegAsm: $_"

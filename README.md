@@ -28,6 +28,7 @@ This program resolves these issues through:
 -   **Dependency Registration:** Handles Forponto dependencies via `RegAsm`.
 -   **Safety (Rollback):** Provides security via an Automatic System Restore Point, a Borland registry 
     backup, and configuration file (`IDAPI.CFG`) backups.
+-   **Folder permissions:** Grants needed permissions to the folder and files in a recursive way.
 ---
 ### How to Use:
 
@@ -94,6 +95,7 @@ O programa resolve esses problemas através de:
 -   **Registro de dependências** do Forponto via RegAsm.
 -   **Segurança (Rollback)**: via Ponto de Restauração Automático e backup do registro Borland e das 
     configurações anteriores (IDAPI.CFG)
+-   **Permissões de Pasta**: Dá as permissões necessárias para as pastas e arquivos de forma recursiva.
 ---
 ### Como utilizar:
 
